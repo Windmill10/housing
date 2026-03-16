@@ -1,0 +1,7 @@
+config.yaml
+last_config.yaml
+session_data/
+results.json
+__pycache__/
+.venv/
+*.pyc

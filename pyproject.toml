@@ -1,0 +1,12 @@
+[project]
+name = "housing"
+version = "0.1.0"
+description = "Facebook group crawler for NTHU student housing rentals"
+requires-python = ">=3.10"
+dependencies = [
+    "googlemaps>=4.10.0",
+    "playwright>=1.58.0",
+    "pydantic>=2.12.5",
+    "pyyaml>=6.0.3",
+    "rich>=14.3.3",
+]

@@ -1,0 +1,23 @@
+credentials:
+  email: "your_facebook_email@example.com"
+  password: "your_password_here"
+
+filters:
+  min_price: 3000
+  max_price: 15000
+  num_people: [2, 4, 5]     # Filter by people count (empty list = any)
+  keywords: []               # e.g. ["套房", "可租補"]
+  exclude_keywords: []       # e.g. ["頂加", "地下室"]
+
+crawler:
+  group_urls:                # Crawl multiple groups
+    - "https://www.facebook.com/groups/NTHUallpass"
+    # - "https://www.facebook.com/groups/ANOTHER_GROUP"
+  max_scrolls: 40
+  scroll_pause: 2.0
+  headless: false
+  session_dir: "session_data"
+
+maps:
+  api_key: ""                # Your Google Maps API key (leave empty to skip)
+  destination: "國立清華大學台達館, 新竹市東區光復路二段101號"
