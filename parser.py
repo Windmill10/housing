@@ -14,6 +14,7 @@ class RentalPost:
     url: str
     prices: list[int] = field(default_factory=list)
     people_count: Optional[int] = None
+    room_type: Optional[str] = None
     raw_html: str = ""
 
     @property
@@ -79,6 +80,19 @@ PEOPLE_PATTERNS = [
 
 CHINESE_NUM = {"單": 1, "雙": 2, "三": 3, "四": 4}
 
+ROOM_TYPE_PATTERNS = [
+    re.compile(r"(獨立套房|分租套房|套房|雅房|整層住家|透天|公寓|大樓)"),
+    re.compile(r"(\d\s*房\s*\d?\s*廳)"),
+]
+
+
+def extract_room_type(text: str) -> Optional[str]:
+    for pattern in ROOM_TYPE_PATTERNS:
+        m = pattern.search(text)
+        if m:
+            return m.group(0)
+    return None
+
 
 def _parse_number(s: str) -> int:
     return int(s.replace(",", "").replace("，", ""))
@@ -119,5 +133,6 @@ def parse_post(post_id: str, author: str, text: str, timestamp: str, url: str,
         url=url,
         prices=extract_prices(text),
         people_count=extract_people_count(text),
+        room_type=extract_room_type(text),
         raw_html=raw_html,
     )

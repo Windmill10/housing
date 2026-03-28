@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
+import re
 import time
 from pathlib import Path
 
@@ -15,10 +17,11 @@ console = Console()
 
 
 class FacebookGroupCrawler:
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: AppConfig, on_group_done=None):
         self.config = config
         self.posts: list[RentalPost] = []
         self._seen_ids: set[str] = set()
+        self._on_group_done = on_group_done
 
     def run(self) -> list[RentalPost]:
         session_dir = Path(self.config.crawler.session_dir)
@@ -37,12 +40,19 @@ class FacebookGroupCrawler:
             if not self._check_fb_logged_in(page):
                 self._login(page)
 
-            for i, url in enumerate(self.config.crawler.group_urls):
-                if len(self.config.crawler.group_urls) > 1:
-                    console.print(f"\n[bold cyan]━━━ Group {i+1}/{len(self.config.crawler.group_urls)} ━━━[/]")
-                self._crawl_group(page, url)
-
-            context.close()
+            try:
+                for i, url in enumerate(self.config.crawler.group_urls):
+                    if len(self.config.crawler.group_urls) > 1:
+                        console.print(f"\n[bold cyan]━━━ Group {i+1}/{len(self.config.crawler.group_urls)} ━━━[/]")
+                    self._crawl_group(page, url)
+                    if self._on_group_done:
+                        self._on_group_done(self.posts)
+            except KeyboardInterrupt:
+                console.print(f"\n[yellow]Interrupted — saving {len(self.posts)} posts collected so far[/]")
+                if self._on_group_done:
+                    self._on_group_done(self.posts)
+            finally:
+                context.close()
 
         return self.posts
 
@@ -99,6 +109,7 @@ class FacebookGroupCrawler:
 
     def _crawl_group(self, page: Page, url: str = "") -> None:
         url = url or self.config.crawler.group_urls[0]
+        self._current_group_url = url
         console.print(f"[cyan]Navigating to group: {url}[/]")
 
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -147,13 +158,14 @@ class FacebookGroupCrawler:
             else:
                 no_new_count = 0
 
-            # Scroll aggressively to trigger lazy loading
-            page.evaluate("window.scrollBy(0, window.innerHeight * 3)")
-            time.sleep(pause)
-            # Extra nudge every few scrolls
-            if i % 3 == 2:
+            # Scroll to trigger lazy loading with randomized behavior
+            scroll_amount = random.uniform(2.5, 3.5)
+            page.evaluate(f"window.scrollBy(0, window.innerHeight * {scroll_amount})")
+            time.sleep(pause + random.uniform(0, 1.0))
+            # Extra nudge at random intervals
+            if random.random() < 0.25:
                 page.evaluate("window.scrollBy(0, window.innerHeight)")
-                time.sleep(1)
+                time.sleep(random.uniform(0.5, 1.5))
 
         console.print(f"[green]Crawling complete. Total posts: {len(self.posts)}[/]")
 
@@ -185,14 +197,22 @@ class FacebookGroupCrawler:
 
         for wrapper in post_wrappers:
             try:
-                # A real post has enough content (comments are short)
-                text = wrapper.inner_text(timeout=3000)
-                if not text or len(text.strip()) < 50:
+                # Extract post text from div[dir="auto"] elements (clean, no FB noise)
+                dir_auto = wrapper.locator('div[dir="auto"]').all()
+                text_parts = []
+                for el in dir_auto:
+                    try:
+                        t = el.inner_text(timeout=1000).strip()
+                        if t and len(t) > 5:
+                            text_parts.append(t)
+                    except Exception:
+                        continue
+
+                if not text_parts:
                     continue
 
-                # Skip if this looks like a comment-only block (very short, ends with Like/Reply)
-                lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
-                if len(lines) < 5:
+                text = text_parts[0]  # first dir=auto is the post body
+                if len(text.strip()) < 20:
                     continue
 
                 content_key = self._content_fingerprint(text)
@@ -204,10 +224,8 @@ class FacebookGroupCrawler:
 
                 author = self._extract_author(wrapper)
                 timestamp = self._extract_timestamp(wrapper)
-                post_url = self._extract_post_url(wrapper)
+                post_url = self._extract_post_url(wrapper, self._current_group_url)
 
-                # Strip comment noise from the end — post text usually comes before
-                # "Like", "Comment", "Share" action buttons
                 clean_text = self._clean_post_text(text)
 
                 post = parse_post(
@@ -226,15 +244,13 @@ class FacebookGroupCrawler:
     def _content_fingerprint(raw: str) -> str:
         """Normalize text for cross-group deduplication.
 
-        Strips the author line, collapses whitespace, removes "See more"
-        truncation markers, and hashes the core body so the same post
-        shared in multiple groups (or truncated variants) is detected.
+        Collapses whitespace, removes "See more" truncation markers,
+        strips punctuation variants, and hashes the core body so the
+        same post shared in multiple groups is detected.
         """
         import re
-        lines = [l.strip() for l in raw.strip().split("\n") if l.strip()]
-        if len(lines) > 1:
-            lines = lines[1:]
-        body = re.sub(r"\s+", "", "".join(lines))
+        body = re.sub(r"\s+", "", raw.strip())
+        body = re.sub(r"[•·\-—–\s]", "", body)
         body = re.sub(r"(…\s*)?See\s*more$", "", body)
         return hashlib.md5(body[:200].encode()).hexdigest()[:20]
 
@@ -291,24 +307,34 @@ class FacebookGroupCrawler:
             pass
         return ""
 
-    def _extract_post_url(self, article) -> str:
+    def _extract_post_url(self, article, group_url: str = "") -> str:
         try:
-            links = article.locator('a[href*="/groups/"]').all()
+            links = article.locator('a[href]').all()
             for link in links:
                 href = link.get_attribute("href") or ""
+                # Direct post/permalink link
                 if "/posts/" in href or "/permalink/" in href:
-                    if href.startswith("/"):
-                        return "https://www.facebook.com" + href.split("?")[0]
-                    return href.split("?")[0]
+                    url = href.split("?")[0]
+                    if url.startswith("/"):
+                        url = "https://www.facebook.com" + url
+                    return url
+            # Extract post ID from photo links (set=pcb.POSTID)
+            for link in links:
+                href = link.get_attribute("href") or ""
+                m = re.search(r"set=pcb\.(\d+)", href)
+                if m:
+                    post_id = m.group(1)
+                    base = group_url or self.config.crawler.group_urls[0]
+                    return f"{base.rstrip('/')}/posts/{post_id}/"
         except Exception:
             pass
-        return self.config.crawler.group_url
+        return group_url or self.config.crawler.group_urls[0]
 
 
 def save_results(posts: list[RentalPost], path: str = "results.json") -> None:
-    data = []
+    new_data = {}
     for p in posts:
-        data.append({
+        new_data[p.post_id] = {
             "post_id": p.post_id,
             "author": p.author,
             "text": p.text,
@@ -317,7 +343,19 @@ def save_results(posts: list[RentalPost], path: str = "results.json") -> None:
             "prices": p.prices,
             "best_price": p.best_price,
             "people_count": p.people_count,
-        })
+            "room_type": p.room_type,
+        }
+
+    # Merge with existing results — new posts override old ones with same id
+    existing = {}
+    if Path(path).exists():
+        with open(path, encoding="utf-8") as f:
+            for p in json.load(f):
+                existing[p["post_id"]] = p
+
+    merged = {**existing, **new_data}
+    data = list(merged.values())
+
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    console.print(f"[green]Results saved to {path}[/]")
+    console.print(f"[green]Results saved to {path} ({len(new_data)} crawled, {len(data)} total)[/]")

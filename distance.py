@@ -11,6 +11,7 @@ from typing import Optional
 import googlemaps
 from rich.console import Console
 from rich.progress import Progress
+from view import extract_type_tag
 
 console = Console()
 
@@ -121,6 +122,8 @@ def calculate_distances(
     # Collect unique addresses
     addr_map: dict[int, str] = {}
     for i, p in enumerate(posts):
+        if extract_type_tag(p.get("text", "")) == "求租":
+            continue
         addr = extract_address(p.get("text", ""))
         if addr:
             addr_map[i] = addr
@@ -184,7 +187,7 @@ def calculate_distances(
                     bike_m = el["distance"]["value"]
 
                 walk_results[idx] = DistanceInfo(
-                    origin=batch_addrs[j - batch_start] if j >= batch_start else addr_map[idx],
+                    origin=batch_addrs[j],
                     walk_duration=walk_dur,
                     walk_meters=walk_m,
                     bike_duration=bike_dur,

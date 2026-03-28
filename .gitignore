@@ -3,5 +3,6 @@ last_config.yaml
 session_data/
 results.json
 __pycache__/
+login_timeout.png
 .venv/
 *.pyc

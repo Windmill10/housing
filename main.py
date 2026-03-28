@@ -33,7 +33,7 @@ def main():
                         help="Only show 出租 posts, exclude 求租")
     parser.add_argument("--max-walk", type=int, default=0,
                         help="Max walking minutes to destination (0=no limit)")
-    parser.add_argument("--scrolls", type=int, default=200, help="Max scrolls per group")
+    parser.add_argument("--scrolls", type=int, default=None, help="Max scrolls per group")
     parser.add_argument("--window", action="store_true",
                         help="Show browser window (default: headless)")
     parser.add_argument("--output", default="results.json")
@@ -48,6 +48,10 @@ def main():
             console.print(f"[red]Config file not found: {config_path}[/]")
             sys.exit(1)
         config = AppConfig.from_yaml(config_path)
+        if args.scrolls is not None:
+            config.crawler.max_scrolls = args.scrolls
+        if args.window:
+            config.crawler.headless = False
     elif args.email and args.password:
         config = AppConfig(
             credentials=Credentials(email=args.email, password=args.password),
@@ -60,7 +64,7 @@ def main():
             ),
             crawler=CrawlerConfig(
                 group_urls=args.groups or DEFAULT_GROUPS,
-                max_scrolls=args.scrolls,
+                max_scrolls=args.scrolls or 200,
                 headless=not args.window,
             ),
             maps=MapsConfig(
@@ -87,33 +91,47 @@ def main():
     for g in groups:
         console.print(f"[dim]  • {g}[/]")
 
-    crawler = FacebookGroupCrawler(config)
+    from view import generate_html
+    report_path = Path("report.html")
+    view_filters = {
+        "only_rental": config.filters.only_rental,
+        "max_walk_minutes": config.filters.max_walk_minutes,
+        "people": config.filters.num_people,
+    }
+
+    def on_group_done(posts):
+        """Save results and regenerate report after each group."""
+        save_results(posts, args.output)
+        with open(args.output, encoding="utf-8") as f:
+            all_posts = json.load(f)
+        html = generate_html(all_posts, view_filters)
+        report_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]Updated report: {len(all_posts)} total posts[/]")
+
+    crawler = FacebookGroupCrawler(config, on_group_done=on_group_done)
     posts = crawler.run()
 
+    # Final save in case no callback was triggered (single group)
     save_results(posts, args.output)
-    console.print(f"[green]Crawled {len(posts)} posts → {args.output}[/]")
+    with open(args.output, encoding="utf-8") as f:
+        final_posts = json.load(f)
+    html = generate_html(final_posts, view_filters)
+    report_path.write_text(html, encoding="utf-8")
+    console.print(f"[green]Report (without distances): {report_path.resolve()}[/]")
 
-    # Distance calculation
+    # Distance calculation — runs after report so you can review before spending API calls
     api_key = config.maps.api_key
     if api_key and not args.no_distance:
         from distance import enrich_results
         console.print(f"\n[cyan]Calculating distances to: {config.maps.destination}[/]")
         enrich_results(args.output, api_key, config.maps.destination)
 
-    # Generate HTML report with filters applied
-    from view import generate_html
-    with open(args.output, encoding="utf-8") as f:
-        final_posts = json.load(f)
-
-    view_filters = {
-        "only_rental": config.filters.only_rental,
-        "max_walk_minutes": config.filters.max_walk_minutes,
-        "people": config.filters.num_people,
-    }
-    html = generate_html(final_posts, view_filters)
-    report_path = Path("report.html")
-    report_path.write_text(html, encoding="utf-8")
-    console.print(f"[green]Report: {report_path.resolve()}[/]")
+        # Regenerate report with distance data
+        with open(args.output, encoding="utf-8") as f:
+            final_posts = json.load(f)
+        html = generate_html(final_posts, view_filters)
+        report_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]Report (with distances): {report_path.resolve()}[/]")
 
 
 if __name__ == "__main__":

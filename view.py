@@ -60,7 +60,9 @@ def extract_details(text: str) -> list[str]:
                  "台水", "台電", "可租補", "可報稅", "電梯", "車位",
                  "寵物", "禁菸", "冷氣", "洗衣", "網路", "天然氣",
                  "備註", "聯絡", "電話", "LINE", "限女", "限男",
-                 "謝絕", "地下室", "頂樓加蓋"]
+                 "謝絕", "地下室", "頂樓加蓋",
+                 "套房", "雅房", "房型", "幾房", "房間", "衛浴",
+                 "獨立套房", "分租套房", "整層", "透天", "公寓", "大樓"]
     details = []
     for line in text.split("\n"):
         stripped = line.strip()
@@ -87,12 +89,9 @@ def _dedup_posts(posts: list[dict]) -> list[dict]:
     seen: set[str] = set()
     unique: list[dict] = []
     for p in posts:
-        lines = [l.strip() for l in p["text"].strip().split("\n") if l.strip()]
-        if len(lines) > 1:
-            lines = lines[1:]
-        body = re.sub(r"\s+", "", "".join(lines))
+        body = re.sub(r"\s+", "", p["text"].strip())
+        body = re.sub(r"[•·\-—–\s]", "", body)
         body = re.sub(r"(…\s*)?See\s*more$", "", body)
-        # Use shorter prefix so truncated and full versions match
         fp = hashlib.md5(body[:200].encode()).hexdigest()[:20]
         if fp not in seen:
             seen.add(fp)
@@ -145,6 +144,8 @@ def generate_html(posts: list[dict], filters: dict) -> str:
         url = p.get("url", "")
         price = p.get("best_price")
         people = p.get("people_count")
+        room_type = p.get("room_type", "")
+        timestamp = escape(p.get("timestamp", ""))
         color = price_color(price)
 
         price_str = f"${price:,}/月" if price else "價格未標"
@@ -174,17 +175,19 @@ def generate_html(posts: list[dict], filters: dict) -> str:
 
         card = f"""
         <div class="card" data-price="{price or 0}" data-people="{people or 0}" data-type="{tag}"
-             data-walk="{walk_m}" data-bike="{bike_m}">
+             data-walk="{walk_m}" data-bike="{bike_m}" data-timestamp="{timestamp}">
             <div class="card-header">
                 <span class="idx">#{i}</span>
                 <span class="{tag_class}">{tag_label}</span>
                 <span class="price" style="color:{color}">{price_str}</span>
                 <span class="people">👤 {people_str_card}</span>
+                {f'<span class="room-type">🏠 {escape(room_type)}</span>' if room_type else ''}
                 {distance_html}
             </div>
             <div class="card-body">
                 <div class="meta">
                     <span class="author">✎ {author}</span>
+                    {f'<span class="timestamp">🕐 {timestamp}</span>' if timestamp else ''}
                     {f'<span class="layout">🏠 {layout}</span>' if layout else ''}
                 </div>
                 {f'<div class="location">📍 {location}</div>' if location else ''}
@@ -376,6 +379,8 @@ def generate_html(posts: list[dict], filters: dict) -> str:
         <button class="filter-btn" onclick="sortCards('price-desc')">Price ↓</button>
         <button class="filter-btn" onclick="sortCards('walk')">🚶 Walk</button>
         <button class="filter-btn" onclick="sortCards('bike')">🚲 Bike</button>
+        <button class="filter-btn" onclick="sortCards('time-new')">🕐 Newest</button>
+        <button class="filter-btn" onclick="sortCards('time-old')">🕐 Oldest</button>
     </div>
     <div class="count" id="count"></div>
 
@@ -423,6 +428,8 @@ function sortCards(mode) {{
         if (mode === 'price-desc') return (parseInt(b.dataset.price)||0) - (parseInt(a.dataset.price)||0);
         if (mode === 'walk') return (parseInt(a.dataset.walk)||999999) - (parseInt(b.dataset.walk)||999999);
         if (mode === 'bike') return (parseInt(a.dataset.bike)||999999) - (parseInt(b.dataset.bike)||999999);
+        if (mode === 'time-new') return (a.dataset.timestamp||'').localeCompare(b.dataset.timestamp||'') * -1;
+        if (mode === 'time-old') return (a.dataset.timestamp||'').localeCompare(b.dataset.timestamp||'');
         return 0;
     }});
     arr.forEach(c => container.appendChild(c));
